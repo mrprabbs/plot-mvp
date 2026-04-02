@@ -9,6 +9,7 @@ import { initializeDatabase } from "./db";
 
 const app = express();
 const httpServer = createServer(app);
+const isProduction = process.env.NODE_ENV === "production";
 
 declare module "http" {
   interface IncomingMessage {
@@ -25,15 +26,20 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+if (isProduction) {
+  app.set("trust proxy", 1);
+}
+
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "plot-market-test-mvp-dev-secret",
+    proxy: isProduction,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isProduction,
       maxAge: 1000 * 60 * 60 * 24 * 7,
     },
   }),
