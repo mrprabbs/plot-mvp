@@ -10,6 +10,9 @@ import FindParking from "@/pages/find-parking";
 import ListLot from "@/pages/list-lot";
 import LotDetail from "@/pages/lot-detail";
 import Bookings from "@/pages/bookings";
+import AuthPage from "@/pages/auth";
+import ProfilePage from "@/pages/profile";
+import OwnerDashboardPage from "@/pages/owner-dashboard";
 
 function AppRouter() {
   return (
@@ -19,6 +22,9 @@ function AppRouter() {
       <Route path="/list" component={ListLot} />
       <Route path="/lot/:id" component={LotDetail} />
       <Route path="/bookings" component={Bookings} />
+      <Route path="/auth" component={AuthPage} />
+      <Route path="/profile" component={ProfilePage} />
+      <Route path="/owner" component={OwnerDashboardPage} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -50,6 +50,7 @@ export default function Bookings() {
     },
     onSuccess: () => {
       toast({ title: "Booking cancelled", description: "Your reservation has been cancelled." });
+      queryClient.invalidateQueries({ queryKey: ["/api/lots"] });
       queryClient.invalidateQueries({ queryKey: ["/api/reservations", `?email=${searchEmail}`] });
     },
     onError: (err: Error) => {

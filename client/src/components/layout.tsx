@@ -2,6 +2,9 @@ import { Link, useLocation } from "wouter";
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useMutation } from "@tanstack/react-query";
+import { useSessionUser } from "@/hooks/use-session-user";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 function PlotLogo({ size = "md" }: { size?: "sm" | "md" }) {
   const sizeClass = size === "sm" ? "h-5 w-5" : "h-7 w-7";
@@ -14,15 +17,33 @@ function PlotLogo({ size = "md" }: { size?: "sm" | "md" }) {
   );
 }
 
-const navLinks = [
-  { href: "/find", label: "Find Parking" },
-  { href: "/list", label: "List Your Lot" },
-  { href: "/bookings", label: "My Bookings" },
-];
-
 export function Navbar() {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { user } = useSessionUser();
+
+  const logoutMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/auth/logout");
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/owner/lots"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/reservations"] });
+    },
+  });
+
+  const navLinks = [
+    { href: "/find", label: "Find Parking" },
+    ...(user?.role === "owner"
+      ? [
+          { href: "/owner", label: "Owner Dashboard" },
+          { href: "/list", label: "Manage Lots" },
+        ]
+      : []),
+    ...(user?.role === "driver" ? [{ href: "/bookings", label: "My Bookings" }] : []),
+    ...(user ? [{ href: "/profile", label: "Profile" }] : [{ href: "/auth", label: "Sign In" }]),
+  ];
 
   return (
     <nav className="sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border" data-testid="navbar">
@@ -50,6 +71,16 @@ export function Navbar() {
                 </span>
               </Link>
             ))}
+            {user && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => logoutMutation.mutate()}
+                disabled={logoutMutation.isPending}
+              >
+                {logoutMutation.isPending ? "Signing out..." : "Sign Out"}
+              </Button>
+            )}
           </div>
 
           {/* Mobile menu button */}
@@ -82,6 +113,19 @@ export function Navbar() {
                 </span>
               </Link>
             ))}
+            {user && (
+              <Button
+                variant="ghost"
+                className="w-full justify-start"
+                onClick={() => {
+                  setMobileOpen(false);
+                  logoutMutation.mutate();
+                }}
+                disabled={logoutMutation.isPending}
+              >
+                {logoutMutation.isPending ? "Signing out..." : "Sign Out"}
+              </Button>
+            )}
           </div>
         )}
       </div>

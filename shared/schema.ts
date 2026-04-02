@@ -2,8 +2,48 @@ import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+export const users = sqliteTable("users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  fullName: text("full_name").notNull(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: text("role").notNull(), // owner | driver
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const passwordResetTokens = sqliteTable("password_reset_tokens", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id),
+  token: text("token").notNull().unique(),
+  expiresAt: text("expires_at").notNull(),
+  usedAt: text("used_at"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const ownerPayoutAccounts = sqliteTable("owner_payout_accounts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerId: integer("owner_id").notNull().references(() => users.id).unique(),
+  stripeAccountId: text("stripe_account_id").notNull().unique(),
+  detailsSubmitted: integer("details_submitted", { mode: "boolean" }).notNull().default(false),
+  chargesEnabled: integer("charges_enabled", { mode: "boolean" }).notNull().default(false),
+  payoutsEnabled: integer("payouts_enabled", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const notificationEvents = sqliteTable("notification_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").references(() => users.id),
+  eventType: text("event_type").notNull(),
+  payload: text("payload").notNull(),
+  deliveryStatus: text("delivery_status").notNull().default("queued"), // queued | sent | failed
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 export const parkingLots = sqliteTable("parking_lots", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  ownerId: integer("owner_id").references(() => users.id),
   name: text("name").notNull(),
   address: text("address").notNull(),
   description: text("description"),
@@ -11,6 +51,7 @@ export const parkingLots = sqliteTable("parking_lots", {
   totalSpots: integer("total_spots").notNull(),
   operatingHoursOpen: text("operating_hours_open").notNull(), // e.g. "08:00"
   operatingHoursClose: text("operating_hours_close").notNull(), // e.g. "22:00"
+  isArchived: integer("is_archived", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
@@ -25,18 +66,73 @@ export const reservations = sqliteTable("reservations", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   spotId: integer("spot_id").notNull().references(() => parkingSpots.id),
   lotId: integer("lot_id").notNull().references(() => parkingLots.id),
+  driverUserId: integer("driver_user_id").references(() => users.id),
   guestName: text("guest_name").notNull(),
   guestEmail: text("guest_email").notNull(),
   startTime: text("start_time").notNull(),
   endTime: text("end_time").notNull(),
-  status: text("status").notNull().default("confirmed"), // confirmed | cancelled
+  cancellationDeadline: text("cancellation_deadline").notNull(),
+  amountCents: integer("amount_cents").notNull().default(0),
+  platformFeeCents: integer("platform_fee_cents").notNull().default(0),
+  ownerPayoutCents: integer("owner_payout_cents").notNull().default(0),
+  status: text("status").notNull().default("pending_payment"),
+  paymentStatus: text("payment_status").notNull().default("pending"),
+  checkoutSessionId: text("checkout_session_id"),
+  paymentIntentId: text("payment_intent_id"),
+  refundId: text("refund_id"),
+  ownerPayoutStatus: text("owner_payout_status").notNull().default("pending"),
+  cancelledAt: text("cancelled_at"),
+  confirmedAt: text("confirmed_at"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+export const userRoleSchema = z.enum(["owner", "driver"]);
+export const reservationStatusSchema = z.enum([
+  "pending_payment",
+  "confirmed",
+  "cancelled",
+  "refunded",
+  "payment_failed",
+]);
+
 // Insert schemas
-export const insertParkingLotSchema = createInsertSchema(parkingLots).omit({
+export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPasswordResetTokenSchema = createInsertSchema(passwordResetTokens).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertOwnerPayoutAccountSchema = createInsertSchema(ownerPayoutAccounts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertParkingLotSchema = createInsertSchema(parkingLots).omit({
+  id: true,
+  isArchived: true,
+  createdAt: true,
+});
+
+export const insertNotificationEventSchema = createInsertSchema(notificationEvents).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const updateOwnerLotSchema = z.object({
+  name: z.string().min(2).optional(),
+  address: z.string().min(5).optional(),
+  description: z.string().optional(),
+  pricePerHour: z.number().min(50).max(10000).optional(),
+  totalSpots: z.number().int().min(1).max(500).optional(),
+  operatingHoursOpen: z.string().optional(),
+  operatingHoursClose: z.string().optional(),
+  isArchived: z.boolean().optional(),
 });
 
 export const insertParkingSpotSchema = createInsertSchema(parkingSpots).omit({
@@ -45,20 +141,88 @@ export const insertParkingSpotSchema = createInsertSchema(parkingSpots).omit({
 
 export const insertReservationSchema = createInsertSchema(reservations).omit({
   id: true,
-  createdAt: true,
   status: true,
+  paymentStatus: true,
+  paymentIntentId: true,
+  refundId: true,
+  ownerPayoutStatus: true,
+  cancelledAt: true,
+  confirmedAt: true,
+  createdAt: true,
+}).superRefine((data, ctx) => {
+  const start = new Date(data.startTime);
+  const end = new Date(data.endTime);
+  const deadline = new Date(data.cancellationDeadline);
+
+  if (Number.isNaN(start.getTime())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["startTime"],
+      message: "Start time must be a valid date-time",
+    });
+  }
+
+  if (Number.isNaN(end.getTime())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["endTime"],
+      message: "End time must be a valid date-time",
+    });
+  }
+
+  if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && end <= start) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["endTime"],
+      message: "End time must be after start time",
+    });
+  }
+
+  if (Number.isNaN(deadline.getTime())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["cancellationDeadline"],
+      message: "Cancellation deadline must be a valid date-time",
+    });
+  }
+
+  if (!Number.isNaN(start.getTime()) && !Number.isNaN(deadline.getTime()) && deadline > start) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["cancellationDeadline"],
+      message: "Cancellation deadline must be before start time",
+    });
+  }
 });
 
 // Types
+export type User = typeof users.$inferSelect;
+export type InsertUser = z.infer<typeof insertUserSchema>;
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+export type InsertPasswordResetToken = z.infer<typeof insertPasswordResetTokenSchema>;
+export type OwnerPayoutAccount = typeof ownerPayoutAccounts.$inferSelect;
+export type InsertOwnerPayoutAccount = z.infer<typeof insertOwnerPayoutAccountSchema>;
+export type NotificationEvent = typeof notificationEvents.$inferSelect;
+export type InsertNotificationEvent = z.infer<typeof insertNotificationEventSchema>;
 export type ParkingLot = typeof parkingLots.$inferSelect;
 export type InsertParkingLot = z.infer<typeof insertParkingLotSchema>;
 export type ParkingSpot = typeof parkingSpots.$inferSelect;
 export type InsertParkingSpot = z.infer<typeof insertParkingSpotSchema>;
 export type Reservation = typeof reservations.$inferSelect;
 export type InsertReservation = z.infer<typeof insertReservationSchema>;
+export type UserRole = z.infer<typeof userRoleSchema>;
+export type ReservationStatus = z.infer<typeof reservationStatusSchema>;
 
 // Extended types for frontend
 export type ParkingLotWithSpots = ParkingLot & {
   availableSpots: number;
   spots?: ParkingSpot[];
+};
+
+export type PublicUser = Omit<User, "passwordHash">;
+
+export type ReservationWithDetails = Reservation & {
+  lotName: string;
+  lotAddress: string;
+  spotNumber: string;
 };

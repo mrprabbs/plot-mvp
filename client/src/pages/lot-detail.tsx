@@ -90,6 +90,7 @@ export default function LotDetail() {
       setBookingOpen(false);
       setSelectedSpot(null);
       form.reset();
+      queryClient.invalidateQueries({ queryKey: ["/api/lots"] });
       queryClient.invalidateQueries({ queryKey: ["/api/lots", lotId] });
     },
     onError: (err: Error) => {
