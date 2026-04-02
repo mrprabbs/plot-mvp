@@ -28,6 +28,10 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, token
   });
 
   const data = await parseJson(response);
+  if (typeof data === 'string' && path.startsWith('/api/')) {
+    throw new Error('The API returned HTML instead of JSON. The mobile backend may not be deployed yet.');
+  }
+
   if (!response.ok) {
     const message = typeof data === 'object' && data && 'message' in data ? String((data as { message: unknown }).message) : 'Request failed';
     throw new Error(message);

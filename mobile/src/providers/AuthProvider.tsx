@@ -44,23 +44,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(nextUser);
   };
 
+  const assertValidSessionPayload = (response: unknown): { user: PublicUser; token: string } => {
+    if (
+      !response
+      || typeof response !== 'object'
+      || !('token' in response)
+      || typeof response.token !== 'string'
+      || !('user' in response)
+      || !response.user
+      || typeof response.user !== 'object'
+    ) {
+      throw new Error('The app did not receive a valid mobile auth response.');
+    }
+
+    return response as { user: PublicUser; token: string };
+  };
+
   const value = useMemo<AuthContextValue>(() => ({
     bootstrapped,
     token,
     user,
     async login(email, password) {
-      const response = await apiFetch<{ user: PublicUser; token: string }>('/api/mobile/auth/login', {
+      const response = await apiFetch('/api/mobile/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
-      await persistSession(response.token, response.user);
+      const session = assertValidSessionPayload(response);
+      await persistSession(session.token, session.user);
     },
     async register(payload) {
-      const response = await apiFetch<{ user: PublicUser; token: string }>('/api/mobile/auth/register', {
+      const response = await apiFetch('/api/mobile/auth/register', {
         method: 'POST',
         body: JSON.stringify({ ...payload, role: 'driver' }),
       });
-      await persistSession(response.token, response.user);
+      const session = assertValidSessionPayload(response);
+      await persistSession(session.token, session.user);
     },
     async logout() {
       await SecureStore.deleteItemAsync(TOKEN_KEY);
