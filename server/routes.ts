@@ -80,20 +80,18 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express,
 ): Promise<Server> {
-  // Auth
-  app.post("/api/auth/register", (req, res) => {
+  app.post("/api/auth/register", async (req, res) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid registration payload", errors: parsed.error.flatten() });
     }
 
     const email = parsed.data.email.toLowerCase().trim();
-
-    if (storage.getUserByEmail(email)) {
+    if (await storage.getUserByEmail(email)) {
       return res.status(409).json({ message: "Email already registered" });
     }
 
-    const user = storage.createUser({
+    const user = await storage.createUser({
       fullName: parsed.data.fullName,
       email,
       passwordHash: hashPassword(parsed.data.password),
@@ -101,17 +99,16 @@ export async function registerRoutes(
     });
 
     req.session.userId = user.id;
-
     return res.status(201).json({ user: toPublicUser(user) });
   });
 
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid login payload", errors: parsed.error.flatten() });
     }
 
-    const user = storage.getUserByEmail(parsed.data.email);
+    const user = await storage.getUserByEmail(parsed.data.email);
     if (!user || !verifyPassword(parsed.data.password, user.passwordHash)) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
@@ -137,13 +134,13 @@ export async function registerRoutes(
     return res.json({ user: toPublicUser(req.authUser) });
   });
 
-  app.post("/api/auth/forgot-password", (req, res) => {
+  app.post("/api/auth/forgot-password", async (req, res) => {
     const parsed = forgotPasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid payload", errors: parsed.error.flatten() });
     }
 
-    const user = storage.getUserByEmail(parsed.data.email);
+    const user = await storage.getUserByEmail(parsed.data.email);
     if (!user) {
       return res.json({
         message: "If this email exists, a reset link has been generated.",
@@ -153,7 +150,7 @@ export async function registerRoutes(
     const token = createSecureToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60).toISOString();
 
-    storage.createPasswordResetToken({
+    await storage.createPasswordResetToken({
       userId: user.id,
       token,
       expiresAt,
@@ -167,18 +164,18 @@ export async function registerRoutes(
     });
   });
 
-  app.post("/api/auth/reset-password", (req, res) => {
+  app.post("/api/auth/reset-password", async (req, res) => {
     const parsed = resetPasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid payload", errors: parsed.error.flatten() });
     }
 
-    const tokenRecord = storage.consumePasswordResetToken(parsed.data.token);
+    const tokenRecord = await storage.consumePasswordResetToken(parsed.data.token);
     if (!tokenRecord) {
       return res.status(400).json({ message: "Reset token is invalid or expired" });
     }
 
-    const updated = storage.updateUserPassword(tokenRecord.userId, hashPassword(parsed.data.password));
+    const updated = await storage.updateUserPassword(tokenRecord.userId, hashPassword(parsed.data.password));
     if (!updated) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -186,7 +183,7 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
-  app.post("/api/auth/change-password", requireAuth, (req, res) => {
+  app.post("/api/auth/change-password", requireAuth, async (req, res) => {
     const parsed = changePasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid payload", errors: parsed.error.flatten() });
@@ -197,7 +194,7 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Current password is incorrect" });
     }
 
-    const updated = storage.updateUserPassword(user.id, hashPassword(parsed.data.newPassword));
+    const updated = await storage.updateUserPassword(user.id, hashPassword(parsed.data.newPassword));
     if (!updated) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -205,16 +202,15 @@ export async function registerRoutes(
     return res.json({ user: toPublicUser(updated) });
   });
 
-  // Public lots
-  app.get("/api/lots", (_req, res) => {
-    const lots = storage.getAllLots();
-    res.json(lots);
+  app.get("/api/lots", async (_req, res) => {
+    const lots = await storage.getAllLots();
+    return res.json(lots);
   });
 
-  app.get("/api/lots/:id", (req, res) => {
+  app.get("/api/lots/:id", async (req, res) => {
     try {
       const id = parseNumericId(req.params.id, "lot ID");
-      const lot = storage.getLotById(id);
+      const lot = await storage.getLotById(id);
       if (!lot) {
         return res.status(404).json({ message: "Lot not found" });
       }
@@ -227,10 +223,10 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/spots/:lotId", (req, res) => {
+  app.get("/api/spots/:lotId", async (req, res) => {
     try {
       const lotId = parseNumericId(req.params.lotId, "lot ID");
-      const spots = storage.getSpotsByLotId(lotId);
+      const spots = await storage.getSpotsByLotId(lotId);
       return res.json(spots);
     } catch (error) {
       if (error instanceof StorageError) {
@@ -240,20 +236,19 @@ export async function registerRoutes(
     }
   });
 
-  // Owner routes
-  app.get("/api/owner/lots", requireAuth, requireRole("owner"), (req, res) => {
-    const lots = storage.getOwnerLots(req.authUser!.id);
+  app.get("/api/owner/lots", requireAuth, requireRole("owner"), async (req, res) => {
+    const lots = await storage.getOwnerLots(req.authUser!.id);
     return res.json(lots);
   });
 
-  app.post("/api/owner/lots", requireAuth, requireRole("owner"), (req, res) => {
+  app.post("/api/owner/lots", requireAuth, requireRole("owner"), async (req, res) => {
     const parsed = createOwnerLotSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid lot data", errors: parsed.error.flatten() });
     }
 
     try {
-      const lot = storage.createOwnerLot(req.authUser!.id, parsed.data);
+      const lot = await storage.createOwnerLot(req.authUser!.id, parsed.data);
       return res.status(201).json(lot);
     } catch (error) {
       if (error instanceof StorageError) {
@@ -263,7 +258,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/owner/lots/:id", requireAuth, requireRole("owner"), (req, res) => {
+  app.patch("/api/owner/lots/:id", requireAuth, requireRole("owner"), async (req, res) => {
     const parsed = updateOwnerLotSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid update payload", errors: parsed.error.flatten() });
@@ -271,7 +266,7 @@ export async function registerRoutes(
 
     try {
       const lotId = parseNumericId(String(req.params.id), "lot ID");
-      const updated = storage.updateOwnerLot(req.authUser!.id, lotId, parsed.data);
+      const updated = await storage.updateOwnerLot(req.authUser!.id, lotId, parsed.data);
       if (!updated) {
         return res.status(404).json({ message: "Lot not found" });
       }
@@ -285,30 +280,28 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/owner/reservations", requireAuth, requireRole("owner"), (req, res) => {
-    const ownerReservations = storage.getOwnerReservations(req.authUser!.id);
+  app.get("/api/owner/reservations", requireAuth, requireRole("owner"), async (req, res) => {
+    const ownerReservations = await storage.getOwnerReservations(req.authUser!.id);
     return res.json(ownerReservations);
   });
 
-  app.get("/api/owner/analytics", requireAuth, requireRole("owner"), (req, res) => {
-    const analytics = storage.getOwnerAnalytics(req.authUser!.id);
+  app.get("/api/owner/analytics", requireAuth, requireRole("owner"), async (req, res) => {
+    const analytics = await storage.getOwnerAnalytics(req.authUser!.id);
     return res.json(analytics);
   });
 
-  // Driver reservations
-  app.get("/api/driver/reservations", requireAuth, requireRole("driver"), (req, res) => {
-    const reservations = storage.getDriverReservations(req.authUser!.id);
+  app.get("/api/driver/reservations", requireAuth, requireRole("driver"), async (req, res) => {
+    const reservations = await storage.getDriverReservations(req.authUser!.id);
     return res.json(reservations);
   });
 
-  // Payment + booking
   app.post("/api/payments/connect/onboarding-link", requireAuth, requireRole("owner"), async (req, res) => {
     try {
       assertStripeConfigured();
       const activeStripe = stripe!;
       const owner = req.authUser!;
 
-      let payout = storage.getOwnerPayoutAccount(owner.id);
+      let payout = await storage.getOwnerPayoutAccount(owner.id);
 
       if (!payout) {
         const account = await activeStripe.accounts.create({
@@ -323,7 +316,7 @@ export async function registerRoutes(
           },
         });
 
-        payout = storage.upsertOwnerPayoutAccount({
+        payout = await storage.upsertOwnerPayoutAccount({
           ownerId: owner.id,
           stripeAccountId: account.id,
           detailsSubmitted: account.details_submitted ?? false,
@@ -358,13 +351,13 @@ export async function registerRoutes(
       const activeStripe = stripe!;
       const ownerId = req.authUser!.id;
 
-      const payout = storage.getOwnerPayoutAccount(ownerId);
+      const payout = await storage.getOwnerPayoutAccount(ownerId);
       if (!payout) {
         return res.status(404).json({ message: "Owner payout account not found" });
       }
 
       const account = await activeStripe.accounts.retrieve(payout.stripeAccountId);
-      const updated = storage.upsertOwnerPayoutAccount({
+      const updated = await storage.upsertOwnerPayoutAccount({
         ownerId,
         stripeAccountId: payout.stripeAccountId,
         detailsSubmitted: account.details_submitted ?? false,
@@ -397,7 +390,7 @@ export async function registerRoutes(
       const activeStripe = stripe!;
       const driver = req.authUser!;
 
-      const lot = storage.getLotById(parsed.data.lotId);
+      const lot = await storage.getLotById(parsed.data.lotId);
       if (!lot) {
         return res.status(404).json({ message: "Lot not found" });
       }
@@ -406,7 +399,7 @@ export async function registerRoutes(
         return res.status(409).json({ message: "Lot does not have a payout owner configured" });
       }
 
-      const payout = storage.getOwnerPayoutAccount(lot.ownerId);
+      const payout = await storage.getOwnerPayoutAccount(lot.ownerId);
       if (!payout || !payout.chargesEnabled) {
         return res.status(409).json({ message: "Owner payout onboarding is not complete" });
       }
@@ -418,7 +411,6 @@ export async function registerRoutes(
       );
       const platformFeeCents = calculatePlatformFeeCents(amountCents);
       const ownerPayoutCents = amountCents - platformFeeCents;
-
       const cancellationDeadline = new Date(new Date(parsed.data.startTime).getTime() - 1000 * 60 * 60).toISOString();
 
       const reservationPayload = insertReservationSchema.parse({
@@ -436,11 +428,10 @@ export async function registerRoutes(
         checkoutSessionId: null,
       });
 
-      const reservation = storage.createPendingReservation(reservationPayload);
+      const reservation = await storage.createPendingReservation(reservationPayload);
 
       try {
         const baseUrl = getAppBaseUrl();
-
         const session = await activeStripe.checkout.sessions.create({
           mode: "payment",
           customer_email: driver.email,
@@ -479,9 +470,8 @@ export async function registerRoutes(
           cancel_url: `${baseUrl}/#/lot/${lot.id}?checkout=cancelled`,
         });
 
-        storage.attachCheckoutSession(reservation.id, session.id);
-
-        storage.createNotificationEvent({
+        await storage.attachCheckoutSession(reservation.id, session.id);
+        await storage.createNotificationEvent({
           userId: driver.id,
           eventType: "booking.checkout.created",
           payload: JSON.stringify({ reservationId: reservation.id, checkoutSessionId: session.id }),
@@ -494,7 +484,7 @@ export async function registerRoutes(
           checkoutUrl: session.url,
         });
       } catch (stripeError) {
-        storage.cancelReservation(reservation.id);
+        await storage.cancelReservation(reservation.id);
         throw stripeError;
       }
     } catch (error) {
@@ -531,12 +521,10 @@ export async function registerRoutes(
       switch (event.type) {
         case "checkout.session.completed": {
           const session = event.data.object as Stripe.Checkout.Session;
-          const paymentIntentId =
-            typeof session.payment_intent === "string" ? session.payment_intent : undefined;
-
-          const updated = storage.markReservationPaidByCheckoutSession(session.id, paymentIntentId);
+          const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : undefined;
+          const updated = await storage.markReservationPaidByCheckoutSession(session.id, paymentIntentId);
           if (updated?.driverUserId) {
-            storage.createNotificationEvent({
+            await storage.createNotificationEvent({
               userId: updated.driverUserId,
               eventType: "booking.payment.confirmed",
               payload: JSON.stringify({ reservationId: updated.id, checkoutSessionId: session.id }),
@@ -547,7 +535,7 @@ export async function registerRoutes(
         }
         case "checkout.session.expired": {
           const session = event.data.object as Stripe.Checkout.Session;
-          storage.markReservationPaymentFailedByCheckoutSession(session.id);
+          await storage.markReservationPaymentFailedByCheckoutSession(session.id);
           break;
         }
         default:
@@ -563,15 +551,14 @@ export async function registerRoutes(
     }
   });
 
-  // Legacy endpoint for existing UI compatibility
-  app.post("/api/lots", requireAuth, requireRole("owner"), (req, res) => {
+  app.post("/api/lots", requireAuth, requireRole("owner"), async (req, res) => {
     const parsed = createOwnerLotSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid lot data", errors: parsed.error.flatten() });
     }
 
     try {
-      const lot = storage.createOwnerLot(req.authUser!.id, parsed.data);
+      const lot = await storage.createOwnerLot(req.authUser!.id, parsed.data);
       return res.status(201).json(lot);
     } catch (error) {
       if (error instanceof StorageError) {
@@ -581,23 +568,25 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/reservations", (req, res) => {
+  app.get("/api/reservations", async (req, res) => {
     const email = req.query.email as string;
     if (!email) {
       return res.status(400).json({ message: "Email query parameter is required" });
     }
 
-    const userReservations = storage.getReservationsByEmail(email);
-    const enriched = userReservations.map((r) => {
-      const lot = storage.getLotById(r.lotId);
-      const spot = storage.getSpotById(r.spotId);
-      return {
-        ...r,
-        lotName: lot?.name ?? "Unknown",
-        lotAddress: lot?.address ?? "Unknown",
-        spotNumber: spot?.spotNumber ?? "Unknown",
-      };
-    });
+    const userReservations = await storage.getReservationsByEmail(email);
+    const enriched = await Promise.all(
+      userReservations.map(async (reservation) => {
+        const lot = await storage.getLotById(reservation.lotId);
+        const spot = await storage.getSpotById(reservation.spotId);
+        return {
+          ...reservation,
+          lotName: lot?.name ?? "Unknown",
+          lotAddress: lot?.address ?? "Unknown",
+          spotNumber: spot?.spotNumber ?? "Unknown",
+        };
+      }),
+    );
 
     return res.json(enriched);
   });
@@ -605,7 +594,7 @@ export async function registerRoutes(
   app.patch("/api/reservations/:id/cancel", requireAuth, async (req, res) => {
     try {
       const reservationId = parseNumericId(String(req.params.id), "reservation ID");
-      const reservation = storage.getReservationById(reservationId);
+      const reservation = await storage.getReservationById(reservationId);
       if (!reservation) {
         return res.status(404).json({ message: "Reservation not found" });
       }
@@ -616,11 +605,9 @@ export async function registerRoutes(
       }
 
       let refundId: string | undefined;
-
       if (reservation.paymentStatus === "paid" && reservation.paymentIntentId) {
         assertStripeConfigured();
         const activeStripe = stripe!;
-
         const refund = await activeStripe.refunds.create({
           payment_intent: reservation.paymentIntentId,
           metadata: {
@@ -632,9 +619,8 @@ export async function registerRoutes(
         refundId = refund.id;
       }
 
-      const result = storage.cancelDriverReservation(reservationId, actor.id, refundId);
-
-      storage.createNotificationEvent({
+      const result = await storage.cancelDriverReservation(reservationId, actor.id, refundId);
+      await storage.createNotificationEvent({
         userId: actor.id,
         eventType: result.refundIssued ? "booking.cancelled.refunded" : "booking.cancelled",
         payload: JSON.stringify({ reservationId: result.reservation.id }),

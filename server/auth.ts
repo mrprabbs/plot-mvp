@@ -47,13 +47,13 @@ export function toPublicUser(user: User) {
   };
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId;
   if (!userId) {
     return res.status(401).json({ message: "Authentication required" });
   }
 
-  const user = storage.getUserById(userId);
+  const user = await storage.getUserById(userId);
   if (!user) {
     req.session.destroy(() => {});
     return res.status(401).json({ message: "Session is invalid" });
@@ -77,10 +77,10 @@ export function requireRole(role: UserRole) {
   };
 }
 
-export function attachSessionUser(req: Request, _res: Response, next: NextFunction) {
+export async function attachSessionUser(req: Request, _res: Response, next: NextFunction) {
   const userId = req.session.userId;
   if (userId) {
-    const user = storage.getUserById(userId);
+    const user = await storage.getUserById(userId);
     if (user) {
       req.authUser = user;
     }

@@ -1,19 +1,19 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, boolean, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = sqliteTable("users", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
   fullName: text("full_name").notNull(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  role: text("role").notNull(), // owner | driver
+  role: text("role").notNull(),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
-export const passwordResetTokens = sqliteTable("password_reset_tokens", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
   token: text("token").notNull().unique(),
   expiresAt: text("expires_at").notNull(),
@@ -21,49 +21,49 @@ export const passwordResetTokens = sqliteTable("password_reset_tokens", {
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
-export const ownerPayoutAccounts = sqliteTable("owner_payout_accounts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const ownerPayoutAccounts = pgTable("owner_payout_accounts", {
+  id: serial("id").primaryKey(),
   ownerId: integer("owner_id").notNull().references(() => users.id).unique(),
   stripeAccountId: text("stripe_account_id").notNull().unique(),
-  detailsSubmitted: integer("details_submitted", { mode: "boolean" }).notNull().default(false),
-  chargesEnabled: integer("charges_enabled", { mode: "boolean" }).notNull().default(false),
-  payoutsEnabled: integer("payouts_enabled", { mode: "boolean" }).notNull().default(false),
+  detailsSubmitted: boolean("details_submitted").notNull().default(false),
+  chargesEnabled: boolean("charges_enabled").notNull().default(false),
+  payoutsEnabled: boolean("payouts_enabled").notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
-export const notificationEvents = sqliteTable("notification_events", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const notificationEvents = pgTable("notification_events", {
+  id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id),
   eventType: text("event_type").notNull(),
   payload: text("payload").notNull(),
-  deliveryStatus: text("delivery_status").notNull().default("queued"), // queued | sent | failed
+  deliveryStatus: text("delivery_status").notNull().default("queued"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
-export const parkingLots = sqliteTable("parking_lots", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const parkingLots = pgTable("parking_lots", {
+  id: serial("id").primaryKey(),
   ownerId: integer("owner_id").references(() => users.id),
   name: text("name").notNull(),
   address: text("address").notNull(),
   description: text("description"),
-  pricePerHour: integer("price_per_hour").notNull(), // stored in cents
+  pricePerHour: integer("price_per_hour").notNull(),
   totalSpots: integer("total_spots").notNull(),
-  operatingHoursOpen: text("operating_hours_open").notNull(), // e.g. "08:00"
-  operatingHoursClose: text("operating_hours_close").notNull(), // e.g. "22:00"
-  isArchived: integer("is_archived", { mode: "boolean" }).notNull().default(false),
+  operatingHoursOpen: text("operating_hours_open").notNull(),
+  operatingHoursClose: text("operating_hours_close").notNull(),
+  isArchived: boolean("is_archived").notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
-export const parkingSpots = sqliteTable("parking_spots", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const parkingSpots = pgTable("parking_spots", {
+  id: serial("id").primaryKey(),
   lotId: integer("lot_id").notNull().references(() => parkingLots.id),
   spotNumber: text("spot_number").notNull(),
-  isAvailable: integer("is_available", { mode: "boolean" }).notNull().default(true),
+  isAvailable: boolean("is_available").notNull().default(true),
 });
 
-export const reservations = sqliteTable("reservations", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const reservations = pgTable("reservations", {
+  id: serial("id").primaryKey(),
   spotId: integer("spot_id").notNull().references(() => parkingSpots.id),
   lotId: integer("lot_id").notNull().references(() => parkingLots.id),
   driverUserId: integer("driver_user_id").references(() => users.id),
@@ -95,7 +95,6 @@ export const reservationStatusSchema = z.enum([
   "payment_failed",
 ]);
 
-// Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
@@ -195,7 +194,6 @@ export const insertReservationSchema = createInsertSchema(reservations).omit({
   }
 });
 
-// Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
@@ -213,7 +211,6 @@ export type InsertReservation = z.infer<typeof insertReservationSchema>;
 export type UserRole = z.infer<typeof userRoleSchema>;
 export type ReservationStatus = z.infer<typeof reservationStatusSchema>;
 
-// Extended types for frontend
 export type ParkingLotWithSpots = ParkingLot & {
   availableSpots: number;
   spots?: ParkingSpot[];
