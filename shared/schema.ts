@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, serial, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -19,6 +19,15 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   expiresAt: text("expires_at").notNull(),
   usedAt: text("used_at"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const mobileAuthTokens = pgTable("mobile_auth_tokens", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  lastUsedAt: text("last_used_at"),
 });
 
 export const ownerPayoutAccounts = pgTable("owner_payout_accounts", {
@@ -47,6 +56,8 @@ export const parkingLots = pgTable("parking_lots", {
   name: text("name").notNull(),
   address: text("address").notNull(),
   description: text("description"),
+  latitude: real("latitude"),
+  longitude: real("longitude"),
   pricePerHour: integer("price_per_hour").notNull(),
   totalSpots: integer("total_spots").notNull(),
   operatingHoursOpen: text("operating_hours_open").notNull(),
@@ -102,6 +113,11 @@ export const insertUserSchema = createInsertSchema(users).omit({
 });
 
 export const insertPasswordResetTokenSchema = createInsertSchema(passwordResetTokens).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertMobileAuthTokenSchema = createInsertSchema(mobileAuthTokens).omit({
   id: true,
   createdAt: true,
 });
@@ -198,6 +214,8 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 export type InsertPasswordResetToken = z.infer<typeof insertPasswordResetTokenSchema>;
+export type MobileAuthToken = typeof mobileAuthTokens.$inferSelect;
+export type InsertMobileAuthToken = z.infer<typeof insertMobileAuthTokenSchema>;
 export type OwnerPayoutAccount = typeof ownerPayoutAccounts.$inferSelect;
 export type InsertOwnerPayoutAccount = z.infer<typeof insertOwnerPayoutAccountSchema>;
 export type NotificationEvent = typeof notificationEvents.$inferSelect;
@@ -214,6 +232,20 @@ export type ReservationStatus = z.infer<typeof reservationStatusSchema>;
 export type ParkingLotWithSpots = ParkingLot & {
   availableSpots: number;
   spots?: ParkingSpot[];
+};
+
+export type MobileLotSummary = {
+  id: number;
+  name: string;
+  address: string;
+  description: string | null;
+  latitude: number;
+  longitude: number;
+  availableSpots: number;
+  pricePerHour: number;
+  priceLabel: string;
+  operatorName: string | null;
+  distanceMiles?: number;
 };
 
 export type PublicUser = Omit<User, "passwordHash">;

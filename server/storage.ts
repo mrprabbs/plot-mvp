@@ -3,6 +3,8 @@ import {
   type InsertUser,
   type PasswordResetToken,
   type InsertPasswordResetToken,
+  type MobileAuthToken,
+  type InsertMobileAuthToken,
   type OwnerPayoutAccount,
   type InsertOwnerPayoutAccount,
   type NotificationEvent,
@@ -17,6 +19,7 @@ import {
   type ReservationWithDetails,
   users,
   passwordResetTokens,
+  mobileAuthTokens,
   ownerPayoutAccounts,
   notificationEvents,
   parkingLots,
@@ -69,6 +72,9 @@ export interface IStorage {
   updateUserPassword(userId: number, passwordHash: string): Promise<User | undefined>;
   createPasswordResetToken(token: InsertPasswordResetToken): Promise<PasswordResetToken>;
   consumePasswordResetToken(token: string): Promise<PasswordResetToken | undefined>;
+  createMobileAuthToken(token: InsertMobileAuthToken): Promise<MobileAuthToken>;
+  getMobileAuthToken(tokenHash: string): Promise<MobileAuthToken | undefined>;
+  touchMobileAuthToken(tokenHash: string): Promise<void>;
   getOwnerPayoutAccount(ownerId: number): Promise<OwnerPayoutAccount | undefined>;
   upsertOwnerPayoutAccount(account: InsertOwnerPayoutAccount): Promise<OwnerPayoutAccount>;
   createNotificationEvent(event: InsertNotificationEvent): Promise<NotificationEvent>;
@@ -146,6 +152,21 @@ export class DatabaseStorage implements IStorage {
 
   async createPasswordResetToken(token: InsertPasswordResetToken): Promise<PasswordResetToken> {
     return first(await db.insert(passwordResetTokens).values(token).returning())!;
+  }
+
+  async createMobileAuthToken(token: InsertMobileAuthToken): Promise<MobileAuthToken> {
+    return first(await db.insert(mobileAuthTokens).values(token).returning())!;
+  }
+
+  async getMobileAuthToken(tokenHash: string): Promise<MobileAuthToken | undefined> {
+    return first(await db.select().from(mobileAuthTokens).where(eq(mobileAuthTokens.tokenHash, tokenHash)));
+  }
+
+  async touchMobileAuthToken(tokenHash: string): Promise<void> {
+    await db
+      .update(mobileAuthTokens)
+      .set({ lastUsedAt: nowIso() })
+      .where(eq(mobileAuthTokens.tokenHash, tokenHash));
   }
 
   async consumePasswordResetToken(token: string): Promise<PasswordResetToken | undefined> {

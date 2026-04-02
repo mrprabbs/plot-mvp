@@ -44,6 +44,15 @@ export async function initializeDatabase() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS owner_payout_accounts (
       id SERIAL PRIMARY KEY,
       owner_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
@@ -70,6 +79,8 @@ export async function initializeDatabase() {
       name TEXT NOT NULL,
       address TEXT NOT NULL,
       description TEXT,
+      latitude REAL,
+      longitude REAL,
       price_per_hour INTEGER NOT NULL,
       total_spots INTEGER NOT NULL,
       operating_hours_open TEXT NOT NULL,
@@ -113,6 +124,8 @@ export async function initializeDatabase() {
 
   await pool.query(`ALTER TABLE parking_lots ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id);`);
   await pool.query(`ALTER TABLE parking_lots ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE;`);
+  await pool.query(`ALTER TABLE parking_lots ADD COLUMN IF NOT EXISTS latitude REAL;`);
+  await pool.query(`ALTER TABLE parking_lots ADD COLUMN IF NOT EXISTS longitude REAL;`);
 
   await pool.query(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS driver_user_id INTEGER REFERENCES users(id);`);
   await pool.query(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cancellation_deadline TEXT NOT NULL DEFAULT '';`);

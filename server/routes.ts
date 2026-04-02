@@ -10,9 +10,16 @@ import {
   userRoleSchema,
 } from "@shared/schema";
 import {
+  buildMobileAuthTokenExpiry,
+  createMobileAuthToken,
+  hashMobileAuthToken,
+} from "./mobile-auth";
+import { buildMobileLotSummary, sortMobileLotsByDistance } from "./mobile-lots";
+import {
   createSecureToken,
   hashPassword,
   requireAuth,
+  requireMobileAuth,
   requireRole,
   toPublicUser,
   verifyPassword,
@@ -70,6 +77,15 @@ function parseNumericId(value: string, fieldName: string) {
   return parsed;
 }
 
+function parseOptionalNumber(value: unknown) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function assertStripeConfigured() {
   if (!stripe) {
     throw new StorageError(503, "Stripe is not configured. Add STRIPE_SECRET_KEY to continue.");
@@ -115,6 +131,61 @@ export async function registerRoutes(
 
     req.session.userId = user.id;
     return res.json({ user: toPublicUser(user) });
+  });
+
+  app.post("/api/mobile/auth/register", async (req, res) => {
+    const parsed = registerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid registration payload", errors: parsed.error.flatten() });
+    }
+
+    const email = parsed.data.email.toLowerCase().trim();
+    if (await storage.getUserByEmail(email)) {
+      return res.status(409).json({ message: "Email already registered" });
+    }
+
+    const user = await storage.createUser({
+      fullName: parsed.data.fullName,
+      email,
+      passwordHash: hashPassword(parsed.data.password),
+      role: parsed.data.role,
+    });
+
+    const token = createMobileAuthToken();
+    await storage.createMobileAuthToken({
+      userId: user.id,
+      tokenHash: hashMobileAuthToken(token),
+      expiresAt: buildMobileAuthTokenExpiry(),
+      lastUsedAt: null,
+    });
+
+    return res.status(201).json({ user: toPublicUser(user), token });
+  });
+
+  app.post("/api/mobile/auth/login", async (req, res) => {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid login payload", errors: parsed.error.flatten() });
+    }
+
+    const user = await storage.getUserByEmail(parsed.data.email);
+    if (!user || !verifyPassword(parsed.data.password, user.passwordHash)) {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    const token = createMobileAuthToken();
+    await storage.createMobileAuthToken({
+      userId: user.id,
+      tokenHash: hashMobileAuthToken(token),
+      expiresAt: buildMobileAuthTokenExpiry(),
+      lastUsedAt: null,
+    });
+
+    return res.json({ user: toPublicUser(user), token });
+  });
+
+  app.get("/api/mobile/auth/me", requireMobileAuth, async (req, res) => {
+    return res.json({ user: toPublicUser(req.authUser!) });
   });
 
   app.post("/api/auth/logout", (req, res) => {
@@ -215,6 +286,98 @@ export async function registerRoutes(
         return res.status(404).json({ message: "Lot not found" });
       }
       return res.json(lot);
+    } catch (error) {
+      if (error instanceof StorageError) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get("/api/mobile/lots/nearby", async (req, res) => {
+    const latitude = parseOptionalNumber(req.query.latitude);
+    const longitude = parseOptionalNumber(req.query.longitude);
+    const userLocation = latitude != null && longitude != null
+      ? { latitude, longitude }
+      : undefined;
+
+    const lots = await storage.getAllLots();
+    const mobileLots = lots
+      .filter((lot) => lot.availableSpots > 0)
+      .map((lot) => buildMobileLotSummary(lot, userLocation));
+
+    return res.json(sortMobileLotsByDistance(mobileLots));
+  });
+
+  app.get("/api/mobile/lots/:id", async (req, res) => {
+    try {
+      const lotId = parseNumericId(req.params.id, "lot ID");
+      const latitude = parseOptionalNumber(req.query.latitude);
+      const longitude = parseOptionalNumber(req.query.longitude);
+      const lot = await storage.getLotById(lotId);
+
+      if (!lot) {
+        return res.status(404).json({ message: "Lot not found" });
+      }
+
+      return res.json({
+        ...lot,
+        mobile: buildMobileLotSummary(
+          lot,
+          latitude != null && longitude != null ? { latitude, longitude } : undefined,
+        ),
+      });
+    } catch (error) {
+      if (error instanceof StorageError) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get("/api/mobile/reservations", requireMobileAuth, async (req, res) => {
+    if (req.authUser!.role !== "driver") {
+      return res.status(403).json({ message: "Driver role is required" });
+    }
+
+    const reservations = await storage.getDriverReservations(req.authUser!.id);
+    return res.json(reservations);
+  });
+
+  app.patch("/api/mobile/reservations/:id/cancel", requireMobileAuth, async (req, res) => {
+    try {
+      if (req.authUser!.role !== "driver") {
+        return res.status(403).json({ message: "Driver role is required" });
+      }
+
+      const reservationId = parseNumericId(String(req.params.id), "reservation ID");
+      const reservation = await storage.getReservationById(reservationId);
+      if (!reservation) {
+        return res.status(404).json({ message: "Reservation not found" });
+      }
+
+      let refundId: string | undefined;
+      if (reservation.paymentStatus === "paid" && reservation.paymentIntentId) {
+        assertStripeConfigured();
+        const activeStripe = stripe!;
+        const refund = await activeStripe.refunds.create({
+          payment_intent: reservation.paymentIntentId,
+          metadata: {
+            reservationId: String(reservation.id),
+            cancelledBy: String(req.authUser!.id),
+          },
+        });
+
+        refundId = refund.id;
+      }
+
+      const cancellation = await storage.cancelDriverReservation(
+        reservationId,
+        req.authUser!.id,
+        refundId,
+      );
+
+      return res.json(cancellation);
     } catch (error) {
       if (error instanceof StorageError) {
         return res.status(error.statusCode).json({ message: error.message });

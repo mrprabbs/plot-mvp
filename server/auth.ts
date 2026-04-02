@@ -2,6 +2,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import type { User, UserRole } from "@shared/schema";
 import { storage } from "./storage";
+import { hashMobileAuthToken, parseMobileBearerToken } from "./mobile-auth";
 
 declare module "express-session" {
   interface SessionData {
@@ -86,5 +87,30 @@ export async function attachSessionUser(req: Request, _res: Response, next: Next
     }
   }
 
+  next();
+}
+
+export async function requireMobileAuth(req: Request, res: Response, next: NextFunction) {
+  const token = parseMobileBearerToken(req.headers.authorization);
+  if (!token) {
+    return res.status(401).json({ message: "Bearer token is required" });
+  }
+
+  const tokenRecord = await storage.getMobileAuthToken(hashMobileAuthToken(token));
+  if (!tokenRecord) {
+    return res.status(401).json({ message: "Mobile token is invalid" });
+  }
+
+  if (new Date(tokenRecord.expiresAt).getTime() <= Date.now()) {
+    return res.status(401).json({ message: "Mobile token has expired" });
+  }
+
+  const user = await storage.getUserById(tokenRecord.userId);
+  if (!user) {
+    return res.status(401).json({ message: "Mobile token user not found" });
+  }
+
+  await storage.touchMobileAuthToken(tokenRecord.tokenHash);
+  req.authUser = user;
   next();
 }
